@@ -7,14 +7,14 @@ const zuliprc = path.resolve(__dirname, 'zuliprc');
 const app = express();
 const PORT = process.env.PORT || 21609;
 
-let message;
+let mesgs;
 
 // 執行遞迴監聽
 (async () => {
 
     async function init () {
 
-        console.log('====== init ======');
+        console.log(`============ init-${Date.now()} ============`);
 
         try {
 
@@ -31,20 +31,33 @@ let message;
             });
 
             const [ events ] = getEvents.events;
-            const { sender: { user_id: operand } } = events;
 
-            //
-            const receive = await client.messages.retrieve({
-                anchor: 'newest',
-                num_before: 1,
-                num_after: 0,
-                narrow: [
-                    { operator: 'sender', operand },
-                ],
-            });
+            // console.log('events:', events)
 
-            console.log('receive:', receive);
-            message = [ ...receive.messages ];
+            // 私訊
+            if (events.message_type === 'private') {
+
+                const receive = await client.messages.retrieve({
+                    anchor: 'newest',
+                    num_before: 1,
+                    num_after: 0,
+                    narrow: [
+                        { operator: 'sender', operand: events.sender.user_id },
+                    ],
+                });
+
+                const regex = /(<([^>]+)>)/ig;
+                let [ _mesg ] = receive.messages;
+                mesgs = {
+                    ..._mesg,
+                    content: _mesg.content.replace(regex, ''),
+                };
+
+            }
+            else mesgs = events.message;
+
+            // 機器人發送訊息
+            await replyMesg(client, mesgs);
             return init();
 
         }
@@ -78,14 +91,19 @@ const getUsers = async () => await zulip.users.retrieve();
 const getStreams = async () => await zulip.streams.retrieve();
 
 // 送訊息
-const replyMesg = async () => {
+const replyMesg = async (zulip, mesgs) => {
 
-    const user_id = 209; // myself
+    console.log('mesgs:', mesgs)
+
+    const to = (mesgs.type === 'private') ? mesgs.sender_id : mesgs.stream_id;
     const params = {
-        to: [user_id],
-        type: 'private',
-        content: '下班',
+        to: [to],
+        type: mesgs.type,
+        content: mesgs.content,
     };
+
+    // stream 要多送 topic
+    if (mesgs.type === 'stream') params.topic = mesgs.subject;
 
     return await zulip.messages.send(params);
 
@@ -98,7 +116,7 @@ app.get('/', async (req, res) => {
     // const reply = await replyMesg();
 
     res.json({
-        streams,
+        // streams,
         members,
     });
 
